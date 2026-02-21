@@ -14,6 +14,9 @@ const ONLINE_THRESHOLD_MS = 30_000;
  *     create two conversations for the same pair even under race conditions
  *     (Convex mutations are serialised per deployment).
  */
+/**
+ * Get or create a 1:1 conversation between two users.
+ */
 export const getOrCreate = mutation({
     args: {
         currentUserId: v.id("users"),
@@ -22,22 +25,35 @@ export const getOrCreate = mutation({
     handler: async (ctx, args) => {
         const { currentUserId, otherUserId } = args;
 
-        // Sort IDs so [A, B] and [B, A] always produce the same canonical pair.
+        // 1. Check if either user has blocked the other
+        const block1 = await ctx.db
+            .query("blockedUsers")
+            .withIndex("by_user_blocked", (q) =>
+                q.eq("userId", currentUserId).eq("blockedUserId", otherUserId)
+            )
+            .unique();
+        const block2 = await ctx.db
+            .query("blockedUsers")
+            .withIndex("by_user_blocked", (q) =>
+                q.eq("userId", otherUserId).eq("blockedUserId", currentUserId)
+            )
+            .unique();
+
+        if (block1 || block2) {
+            throw new Error("Cannot message this user due to privacy settings.");
+        }
+
         const [memberA, memberB] = [currentUserId, otherUserId].sort() as [
             typeof currentUserId,
             typeof otherUserId,
         ];
 
-        // Scan only non-group conversations for a match.
-        // We cannot use a compound index on the members array in Convex, so we
-        // do a full scan but short-circuit as soon as we find a match.
         const allConversations = await ctx.db
             .query("conversations")
             .collect();
 
         const existing = allConversations.find((conv) => {
             if (conv.isGroup) return false;
-            // Both sorted IDs must be present (order-independent once sorted).
             return (
                 conv.members.includes(memberA) &&
                 conv.members.includes(memberB) &&
@@ -47,24 +63,21 @@ export const getOrCreate = mutation({
 
         if (existing) return existing._id;
 
-        // Insert with sorted members to guarantee canonical representation.
+        // Insert with status "pending"
         return await ctx.db.insert("conversations", {
             isGroup: false,
             members: [memberA, memberB],
             lastMessage: "",
             lastMessageAt: Date.now(),
+            status: "pending",
+            initiatorId: currentUserId,
         });
     },
 });
 
 /**
- * List all conversations for a given user, ordered by most recent message.
- *
- * Unread count logic:
- *   For each conversation, count messages where:
- *     - The current user is NOT in readBy
- *     - The current user is NOT the sender (you always "read" your own messages)
- *   This gives the unread badge number shown in the sidebar.
+ * List all conversations for a given user.
+ * Excludes conversations with blocked users.
  */
 export const list = query({
     args: { userId: v.id("users") },
@@ -75,14 +88,38 @@ export const list = query({
             .order("desc")
             .collect();
 
-        // Filter to conversations this user belongs to
-        const myConversations = allConversations.filter((conv) =>
-            conv.members.includes(args.userId)
-        );
+        // Get blocked users list for the current user
+        const blockedByMe = await ctx.db
+            .query("blockedUsers")
+            .withIndex("by_user", (q) => q.eq("userId", args.userId))
+            .collect();
+        const blockedMe = await ctx.db
+            .query("blockedUsers")
+            .withIndex("by_blocked_user", (q) => q.eq("blockedUserId", args.userId))
+            .collect();
+
+        const blockedIds = new Set([
+            ...blockedByMe.map(b => b.blockedUserId),
+            ...blockedMe.map(b => b.userId)
+        ]);
+
+        // Filter to conversations this user belongs to, AND exclude blocked users
+        const myConversations = allConversations.filter((conv) => {
+            if (!conv.members.includes(args.userId)) return false;
+
+            const otherMemberId = conv.members.find(id => id !== args.userId);
+            if (otherMemberId && blockedIds.has(otherMemberId)) return false;
+
+            // Treat missing status as accepted for backward compatibility
+            const status = conv.status ?? "accepted";
+            if (status !== 'accepted') return false;
+
+            return true;
+        });
 
         const now = Date.now();
 
-        const enriched = await Promise.all(
+        return await Promise.all(
             myConversations.map(async (conv) => {
                 const otherMemberId = conv.members.find(
                     (id) => id !== args.userId
@@ -92,7 +129,6 @@ export const list = query({
                     ? await ctx.db.get(otherMemberId)
                     : null;
 
-                // Derive isOnline from lastSeen heartbeat, not boolean flag.
                 const otherUser = otherUserRaw
                     ? {
                         ...otherUserRaw,
@@ -100,7 +136,6 @@ export const list = query({
                     }
                     : null;
 
-                // Count unread messages for this user in this conversation.
                 const unreadMessages = await ctx.db
                     .query("messages")
                     .withIndex("by_conversation", (q) =>
@@ -121,13 +156,43 @@ export const list = query({
                 };
             })
         );
-
-        return enriched;
     },
 });
 
 /**
- * Get a single conversation by ID.
+ * Accept a conversation request.
+ */
+export const acceptRequest = mutation({
+    args: { conversationId: v.id("conversations") },
+    handler: async (ctx, args) => {
+        await ctx.db.patch(args.conversationId, {
+            status: "accepted",
+        });
+    },
+});
+
+/**
+ * Reject/Delete a conversation request.
+ */
+export const rejectRequest = mutation({
+    args: { conversationId: v.id("conversations") },
+    handler: async (ctx, args) => {
+        // Delete conversation and its messages
+        await ctx.db.delete(args.conversationId);
+
+        const messages = await ctx.db
+            .query("messages")
+            .withIndex("by_conversation", (q) => q.eq("conversationId", args.conversationId))
+            .collect();
+
+        for (const msg of messages) {
+            await ctx.db.delete(msg._id);
+        }
+    },
+});
+
+/**
+ * Get a single conversation.
  */
 export const get = query({
     args: { conversationId: v.id("conversations") },

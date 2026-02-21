@@ -11,12 +11,16 @@ export default defineSchema({
     clerkId: v.string(),       // Clerk user ID (used as the join key for auth)
     name: v.string(),
     email: v.string(),
+    username: v.optional(v.string()),      // Unique handle
     imageUrl: v.string(),
     isOnline: v.boolean(),
     lastSeen: v.number(),      // Unix timestamp in ms
+    isDiscoverable: v.optional(v.boolean()), // Whether user shows up in search
+    showEmail: v.optional(v.boolean()),     // Whether email is visible on profile
   })
     .index("by_clerk_id", ["clerkId"])
-    .index("by_name", ["name"]),
+    .index("by_name", ["name"])
+    .index("by_username", ["username"]),
 
   // Supports 1:1 (and future group) conversations.
   conversations: defineTable({
@@ -25,6 +29,8 @@ export default defineSchema({
     members: v.array(v.id("users")),      // Array of Convex user IDs
     lastMessage: v.string(),
     lastMessageAt: v.number(),            // Unix timestamp for ordering
+    status: v.optional(v.union(v.literal("pending"), v.literal("accepted"))),
+    initiatorId: v.optional(v.id("users")),           // User who started the conversation
   })
     .index("by_last_message_at", ["lastMessageAt"]),
 
@@ -59,4 +65,13 @@ export default defineSchema({
   })
     .index("by_conversation", ["conversationId"])
     .index("by_conversation_user", ["conversationId", "userId"]),
+
+  // Tracks blocked users to prevent messaging and discovery.
+  blockedUsers: defineTable({
+    userId: v.id("users"),
+    blockedUserId: v.id("users"),
+  })
+    .index("by_user", ["userId"])
+    .index("by_blocked_user", ["blockedUserId"])
+    .index("by_user_blocked", ["userId", "blockedUserId"]),
 });

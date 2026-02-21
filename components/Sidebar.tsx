@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Search, MessageSquare, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Tab = "chats" | "people";
+type Tab = "chats" | "people" | "requests";
 
 interface SidebarProps {
     activeConversationId?: string;
@@ -26,6 +26,14 @@ export function Sidebar({ activeConversationId }: SidebarProps) {
         api.users.getMe,
         user ? { clerkId: user.id } : "skip"
     );
+
+    // Get unread counts for requests
+    const conversations = useQuery(
+        api.conversations.list,
+        me ? { userId: me._id } : "skip"
+    );
+
+    const requestCount = conversations?.filter(c => c.status === "pending" && c.members[0] !== me?._id).length ?? 0;
 
     /**
      * Search debounce — 300ms delay prevents a Convex query on every keystroke.
@@ -49,7 +57,7 @@ export function Sidebar({ activeConversationId }: SidebarProps) {
                         <span className="font-semibold text-sm tracking-wide">TARS</span>
                         {me && (
                             <p className="text-[10px] text-muted-foreground leading-tight">
-                                {me.name}
+                                @{me.username}
                             </p>
                         )}
                     </div>
@@ -63,7 +71,10 @@ export function Sidebar({ activeConversationId }: SidebarProps) {
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
-                        placeholder={activeTab === "chats" ? "Search chats…" : "Search people…"}
+                        placeholder={
+                            activeTab === "chats" ? "Search chats…" :
+                                activeTab === "people" ? "Search people…" : "Search requests…"
+                        }
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         className="pl-9 h-9 text-sm bg-muted/50 border-transparent focus-visible:ring-1"
@@ -85,6 +96,19 @@ export function Sidebar({ activeConversationId }: SidebarProps) {
                     active={activeTab === "people"}
                     onClick={() => { setActiveTab("people"); setSearch(""); }}
                 />
+                <TabButton
+                    icon={
+                        <div className="relative">
+                            <Users className="h-3.5 w-3.5" />
+                            {requestCount > 0 && (
+                                <span className="absolute -top-1 -right-1 flex h-2 w-2 rounded-full bg-primary" />
+                            )}
+                        </div>
+                    }
+                    label="Requests"
+                    active={activeTab === "requests"}
+                    onClick={() => { setActiveTab("requests"); setSearch(""); }}
+                />
             </div>
 
             {/* ── Content ───────────────────────────────────────────── */}
@@ -95,9 +119,17 @@ export function Sidebar({ activeConversationId }: SidebarProps) {
                             clerkId={user.id}
                             search={debouncedSearch}
                             activeConversationId={activeConversationId}
+                            showRequests={false}
                         />
-                    ) : (
+                    ) : activeTab === "people" ? (
                         <UserList clerkId={user.id} search={debouncedSearch} />
+                    ) : (
+                        <ConversationList
+                            clerkId={user.id}
+                            search={debouncedSearch}
+                            activeConversationId={activeConversationId}
+                            showRequests={true}
+                        />
                     )
                 )}
             </div>

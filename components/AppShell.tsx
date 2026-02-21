@@ -9,33 +9,24 @@ import { MessageSquare } from "lucide-react";
 
 interface AppShellProps {
     conversationId?: string;
+    children?: React.ReactNode;
 }
 
 /**
  * AppShell is the top-level layout component for authenticated users.
- *
- * Desktop: fixed sidebar (320px) + main content area side by side.
- * Mobile:  sidebar OR chat (full-screen), toggled by the conversationId presence.
- *
- * We use CSS classes rather than JS state for the responsive toggle
- * to avoid layout flicker on navigation.
  */
-export function AppShell({ conversationId }: AppShellProps) {
+export function AppShell({ conversationId, children }: AppShellProps) {
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(!conversationId);
     const pathname = usePathname();
 
-    const isInChat = Boolean(conversationId);
+    const isInChat = Boolean(conversationId || children);
 
     return (
         <>
-            {/* UserSync runs the heartbeat & upserts the Clerk user on every route.
-            It must live here (not just on page.tsx) because AppShell renders
-            on both / and /chat/[id]. Without this, the heartbeat stops the
-            moment a user opens a conversation, causing them to appear offline. */}
+            {/* UserSync runs the heartbeat & upserts the Clerk user on every route. */}
             <UserSync />
             <div className="flex h-screen w-screen overflow-hidden bg-background">
                 {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-                {/* Desktop: always visible. Mobile: hidden when a conversation is open. */}
                 <div
                     className={`
           flex-shrink-0 border-r border-border bg-card
@@ -55,7 +46,9 @@ export function AppShell({ conversationId }: AppShellProps) {
           min-w-0
         `}
                 >
-                    {conversationId ? (
+                    {children ? (
+                        children
+                    ) : conversationId ? (
                         <ChatWindow conversationId={conversationId} />
                     ) : (
                         <NoChatSelected />

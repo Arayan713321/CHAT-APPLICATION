@@ -7,6 +7,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { useGetOrCreateConversation } from "@/lib/getOrCreateConversation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Users } from "lucide-react";
+import Link from "next/link";
 
 interface UserListProps {
     clerkId: string;
@@ -65,9 +66,9 @@ export function UserList({ clerkId, search }: UserListProps) {
     return (
         <div className="flex flex-col gap-0.5 p-2">
             {(users as (typeof users)[number][]).map((user) => (
-                <button
+                <Link
                     key={user._id}
-                    onClick={() => handleUserClick(user._id)}
+                    href={`/profile/${user._id}`}
                     className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-muted/70 active:bg-muted w-full"
                 >
                     {/* Avatar with online indicator */}
@@ -78,25 +79,25 @@ export function UserList({ clerkId, search }: UserListProps) {
                                 {getInitials(user.name)}
                             </AvatarFallback>
                         </Avatar>
-                        {/*
-                         * isOnline is derived server-side from:
-                         *   Date.now() - lastSeen < 30_000
-                         * The client calls a 15s heartbeat to keep lastSeen fresh.
-                         */}
                         <span
                             className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-card ${user.isOnline ? "bg-green-500" : "bg-muted-foreground/40"
                                 }`}
                         />
                     </div>
 
-                    {/* Name + status */}
+                    {/* Name + username */}
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{user.name}</p>
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium truncate">{user.name}</p>
+                            {user.isOnline && (
+                                <span className="text-[10px] text-green-500 font-medium">Online</span>
+                            )}
+                        </div>
                         <p className="text-xs text-muted-foreground truncate">
-                            {user.isOnline ? "Online" : "Offline"}
+                            @{user.username}
                         </p>
                     </div>
-                </button>
+                </Link>
             ))}
         </div>
     );

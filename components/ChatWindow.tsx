@@ -84,6 +84,8 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
     const sendMessage = useMutation(api.messages.send);
     const markRead = useMutation(api.messages.markRead);
     const setTyping = useMutation(api.typing.setTyping);
+    const acceptRequest = useMutation(api.conversations.acceptRequest);
+    const rejectRequest = useMutation(api.conversations.rejectRequest);
 
     const [inputValue, setInputValue] = useState("");
     const [isAtBottom, setIsAtBottom] = useState(true);
@@ -217,8 +219,11 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
 
     if (!me) return null;
 
+    const isPending = conversation?.status === "pending";
+    const isInitiator = conversation?.initiatorId === me._id;
+
     return (
-        <div className="flex h-full flex-col">
+        <div className="flex h-full flex-col relative">
             {/* ── Chat header ───────────────────────────────────────────────── */}
             <div className="flex items-center gap-3 border-b border-border px-4 py-3 flex-shrink-0">
                 <Link href="/" className="sm:hidden flex-shrink-0">
@@ -229,7 +234,7 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
 
                 {otherUser ? (
                     <>
-                        <div className="relative flex-shrink-0">
+                        <Link href={`/profile/${otherUser._id}`} className="relative flex-shrink-0 hover:opacity-80 transition-opacity">
                             <Avatar className="h-9 w-9">
                                 <AvatarImage src={otherUser.imageUrl} alt={otherUser.name} />
                                 <AvatarFallback className="text-xs bg-primary/10 text-primary">
@@ -239,13 +244,15 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                             {otherUser.isOnline && (
                                 <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-background bg-green-500" />
                             )}
-                        </div>
+                        </Link>
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold leading-tight truncate">
-                                {otherUser.name}
-                            </p>
+                            <Link href={`/profile/${otherUser._id}`} className="hover:underline">
+                                <p className="text-sm font-semibold leading-tight truncate">
+                                    {otherUser.name}
+                                </p>
+                            </Link>
                             <p className="text-xs text-muted-foreground">
-                                {otherUser.isOnline ? "Online" : "Offline"}
+                                @{otherUser.username} • {otherUser.isOnline ? "Online" : "Offline"}
                             </p>
                         </div>
                     </>
@@ -265,7 +272,39 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                 ref={scrollContainerRef}
                 className="flex-1 overflow-y-auto px-4 py-4 space-y-1 min-h-0"
             >
-                {messages === undefined ? (
+                {isPending ? (
+                    <div className="flex h-full flex-col items-center justify-center text-center gap-4 px-6">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
+                            <MessageCircle className="h-8 w-8" />
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="font-semibold text-lg">
+                                {isInitiator ? "Request Sent" : "Message Request"}
+                            </h3>
+                            <p className="text-sm text-muted-foreground max-w-xs">
+                                {isInitiator
+                                    ? `Your message request has been sent to ${otherUser?.name}. You can chat once they accept.`
+                                    : `${otherUser?.name} wants to chat with you. Accept the request to see their messages.`}
+                            </p>
+                        </div>
+                        {!isInitiator && conversation && (
+                            <div className="flex gap-2">
+                                <Button
+                                    onClick={() => markRead({ conversationId: conversation._id, userId: me._id }).then(() => acceptRequest({ conversationId: conversation._id }))}
+                                    className="px-6"
+                                >
+                                    Accept
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => rejectRequest({ conversationId: conversation._id })}
+                                >
+                                    Ignore
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                ) : messages === undefined ? (
                     <MessageListSkeleton />
                 ) : messages.length === 0 ? (
                     <EmptyChatState name={otherUser?.name} />
@@ -297,7 +336,7 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
             </div>
 
             {/* ── "↓ New messages" pill ──────────────────────────────────────── */}
-            {hasNewMessages && (
+            {hasNewMessages && !isPending && (
                 <div className="absolute bottom-20 left-1/2 -translate-x-1/2">
                     <Button
                         size="sm"
@@ -311,7 +350,7 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
             )}
 
             {/* ── Send error banner ─────────────────────────────────────────── */}
-            {sendError && (
+            {sendError && !isPending && (
                 <div className="mx-4 mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
                     <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
                     {sendError}
@@ -319,25 +358,27 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
             )}
 
             {/* ── Message input ──────────────────────────────────────────────── */}
-            <div className="flex items-center gap-2 border-t border-border px-4 py-3 flex-shrink-0">
-                <Input
-                    placeholder="Type a message…"
-                    value={inputValue}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    className="flex-1 bg-muted/50 border-transparent focus-visible:ring-1 text-sm"
-                    autoComplete="off"
-                    disabled={isSending}
-                />
-                <Button
-                    size="icon"
-                    onClick={handleSend}
-                    disabled={!inputValue.trim() || isSending}
-                    className="h-9 w-9 flex-shrink-0"
-                >
-                    <Send className={`h-4 w-4 ${isSending ? "opacity-50" : ""}`} />
-                </Button>
-            </div>
+            {!isPending && (
+                <div className="flex items-center gap-2 border-t border-border px-4 py-3 flex-shrink-0">
+                    <Input
+                        placeholder="Type a message…"
+                        value={inputValue}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        className="flex-1 bg-muted/50 border-transparent focus-visible:ring-1 text-sm"
+                        autoComplete="off"
+                        disabled={isSending}
+                    />
+                    <Button
+                        size="icon"
+                        onClick={handleSend}
+                        disabled={!inputValue.trim() || isSending}
+                        className="h-9 w-9 flex-shrink-0"
+                    >
+                        <Send className={`h-4 w-4 ${isSending ? "opacity-50" : ""}`} />
+                    </Button>
+                </div>
+            )}
         </div>
     );
 }
