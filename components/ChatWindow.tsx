@@ -10,8 +10,10 @@ import { TypingIndicator } from "@/components/TypingIndicator";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, ArrowLeft, ChevronDown, MessageCircle, AlertCircle } from "lucide-react";
+import { Send, ArrowLeft, ChevronDown, MessageCircle, AlertCircle, Image as ImageIcon, MoreVertical, LogOut, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
+import { formatLastSeen } from "@/lib/formatTimestamp";
 
 interface ChatWindowProps {
     conversationId: string;
@@ -27,6 +29,9 @@ type MessageWithSender = {
     createdAt: number;
     deleted: boolean;
     readBy: Id<"users">[];
+    type?: "text" | "image";
+    imageUrl?: string;
+    status?: "sending" | "sent" | "error";
     reactions?: Array<{ userId: Id<"users">; emoji: string }>;
     sender: {
         _id: Id<"users">;
@@ -92,6 +97,12 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
     const [hasNewMessages, setHasNewMessages] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const [sendError, setSendError] = useState<string | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [optimisticMessages, setOptimisticMessages] = useState<any[]>([]);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const leaveGroup = useMutation(api.conversations.leaveGroup);
+    const generateUploadUrl = useMutation(api.images.generateUploadUrl);
 
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const bottomSentinelRef = useRef<HTMLDivElement>(null);
@@ -136,7 +147,7 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
     // ── Auto-scroll / new message detection ────────────────────────────────────
     useEffect(() => {
         if (!messages) return;
-        const newCount = messages.length;
+        const newCount = (messages.length) + (optimisticMessages.length);
         if (newCount > prevMessageCountRef.current) {
             if (isAtBottom) {
                 bottomSentinelRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -145,16 +156,35 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
             }
         }
         prevMessageCountRef.current = newCount;
-    }, [messages, isAtBottom]);
+    }, [messages, optimisticMessages, isAtBottom]);
 
     // ── Send message ────────────────────────────────────────────────────────────
-    const handleSend = useCallback(async () => {
-        const content = inputValue.trim();
-        if (!content || !me || isSending) return;
+    const handleSend = useCallback(async (type: "text" | "image" = "text", imageUrl?: string, retryId?: string) => {
+        const content = type === "text" ? (retryId ? optimisticMessages.find(m => m.localId === retryId)?.content : inputValue.trim()) : "📷 Image";
+        if (type === "text" && !content) return;
+        if (!me) return;
 
-        setIsSending(true);
-        setSendError(null);
-        setInputValue("");
+        const localId = retryId || Math.random().toString(36).substring(7);
+        const optimisticMsg = {
+            _id: localId as any,
+            localId,
+            content,
+            type,
+            imageUrl,
+            senderId: me._id,
+            createdAt: Date.now(),
+            status: "sending" as const,
+            sender: me,
+            deleted: false,
+            readBy: [me._id],
+        };
+
+        if (!retryId) {
+            setOptimisticMessages(prev => [...prev, optimisticMsg]);
+            if (type === "text") setInputValue("");
+        } else {
+            setOptimisticMessages(prev => prev.map(m => m.localId === retryId ? { ...m, status: "sending" } : m));
+        }
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         setTyping({
@@ -167,15 +197,56 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
             await sendMessage({
                 conversationId: conversationId as Id<"conversations">,
                 senderId: me._id,
-                content,
+                content: content || "📷 Image",
+                type,
+                imageUrl,
             });
-        } catch {
-            setSendError("Failed to send. Try again.");
-            setInputValue(content);
-        } finally {
-            setIsSending(false);
+            // On success, remove from optimistic
+            setOptimisticMessages(prev => prev.filter(m => m.localId !== localId));
+        } catch (error) {
+            console.error(error);
+            setOptimisticMessages(prev => prev.map(m => m.localId === localId ? { ...m, status: "error" } : m));
+            setSendError("Failed to send some messages.");
         }
-    }, [inputValue, me, conversationId, sendMessage, setTyping, isSending]);
+    }, [inputValue, me, conversationId, sendMessage, setTyping, optimisticMessages]);
+
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !me) return;
+
+        setIsUploading(true);
+        try {
+            const postUrl = await generateUploadUrl();
+            const result = await fetch(postUrl, {
+                method: "POST",
+                headers: { "Content-Type": file.type },
+                body: file,
+            });
+            const { storageId } = await result.json();
+            await handleSend("image", storageId);
+        } catch (error) {
+            console.error(error);
+            setSendError("Failed to upload image.");
+        } finally {
+            setIsUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+    };
+
+    const handleLeaveOrDelete = async () => {
+        if (!me || !conversation) return;
+        const confirmMsg = conversation.isGroup
+            ? "Are you sure you want to leave this group?"
+            : "Are you sure you want to delete this chat history?";
+
+        if (window.confirm(confirmMsg)) {
+            await leaveGroup({
+                conversationId: conversation._id,
+                userId: me._id,
+            });
+            window.location.href = "/";
+        }
+    };
 
     // ── Typing detection ────────────────────────────────────────────────────────
     const handleInputChange = useCallback(
@@ -232,7 +303,23 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                     </Button>
                 </Link>
 
-                {otherUser ? (
+                {conversation?.isGroup ? (
+                    <div className="flex items-center gap-3 flex-1">
+                        <Avatar className="h-9 w-9 rounded-lg overflow-hidden">
+                            <div className="h-full w-full flex items-center justify-center bg-primary/10 text-primary font-bold text-xs uppercase">
+                                {getInitials(conversation.name ?? "Group")}
+                            </div>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold leading-tight truncate">
+                                {conversation.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                                {conversation.members.length} members
+                            </p>
+                        </div>
+                    </div>
+                ) : otherUser ? (
                     <>
                         <Link href={`/profile/${otherUser._id}`} className="relative flex-shrink-0 hover:opacity-80 transition-opacity">
                             <Avatar className="h-9 w-9">
@@ -252,7 +339,7 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                                 </p>
                             </Link>
                             <p className="text-xs text-muted-foreground">
-                                @{otherUser.username} • {otherUser.isOnline ? "Online" : "Offline"}
+                                @{otherUser.username} • {otherUser.isOnline ? "Online" : `Last seen ${formatLastSeen(otherUser.lastSeen)}`}
                             </p>
                         </div>
                     </>
@@ -265,6 +352,18 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                         </div>
                     </div>
                 )}
+
+                <div className="flex-shrink-0">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive transition-colors"
+                        onClick={handleLeaveOrDelete}
+                        title={conversation?.isGroup ? "Leave Group" : "Delete Chat"}
+                    >
+                        {conversation?.isGroup ? <LogOut className="h-4.5 w-4.5" /> : <Trash2 className="h-4.5 w-4.5" />}
+                    </Button>
+                </div>
             </div>
 
             {/* ── Messages area ─────────────────────────────────────────────── */}
@@ -310,10 +409,17 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                     <EmptyChatState name={otherUser?.name} />
                 ) : (
                     <>
-                        {(messages as MessageWithSender[]).map((msg, index: number) => {
-                            const prevMsg = index > 0 ? messages[index - 1] : null;
+                        {([...(messages || []), ...optimisticMessages] as MessageWithSender[]).map((msg, index: number, allMsgs) => {
+                            const prevMsg = index > 0 ? allMsgs[index - 1] : null;
                             const showDateSeparator =
                                 !prevMsg || !isSameDay(prevMsg.createdAt, msg.createdAt);
+
+                            // Check if this message is already in the persisted list to avoid duplicates
+                            // (When a sending message becomes sent, it will appear in messages but might still be in optimistic for a split second)
+                            if (messages?.some(m => m.createdAt === msg.createdAt && m.senderId === msg.senderId && m.content === msg.content && m._id !== msg._id)) {
+                                return null;
+                            }
+
                             return (
                                 <div key={msg._id}>
                                     {showDateSeparator && (
@@ -324,6 +430,16 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                                         isOwn={msg.senderId === me._id}
                                         currentUserId={me._id}
                                     />
+                                    {msg.status === "error" && (
+                                        <div className="flex justify-end pr-1 mb-2">
+                                            <button
+                                                onClick={() => handleSend(msg.type, msg.imageUrl, (msg as any).localId)}
+                                                className="text-[10px] text-primary hover:underline font-medium"
+                                            >
+                                                Retry
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })}
@@ -360,6 +476,22 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
             {/* ── Message input ──────────────────────────────────────────────── */}
             {!isPending && (
                 <div className="flex items-center gap-2 border-t border-border px-4 py-3 flex-shrink-0">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        ref={fileInputRef}
+                        onChange={handleImageUpload}
+                    />
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isSending || isUploading}
+                    >
+                        <ImageIcon className={cn("h-5 w-5", isUploading && "animate-pulse")} />
+                    </Button>
                     <Input
                         placeholder="Type a message…"
                         value={inputValue}
@@ -367,12 +499,12 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
                         onKeyDown={handleKeyDown}
                         className="flex-1 bg-muted/50 border-transparent focus-visible:ring-1 text-sm"
                         autoComplete="off"
-                        disabled={isSending}
+                        disabled={isSending || isUploading}
                     />
                     <Button
                         size="icon"
-                        onClick={handleSend}
-                        disabled={!inputValue.trim() || isSending}
+                        onClick={() => handleSend("text")}
+                        disabled={(!inputValue.trim() && !isUploading) || isSending || isUploading}
                         className="h-9 w-9 flex-shrink-0"
                     >
                         <Send className={`h-4 w-4 ${isSending ? "opacity-50" : ""}`} />

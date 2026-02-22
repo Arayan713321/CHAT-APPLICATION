@@ -22,15 +22,18 @@ export default defineSchema({
     .index("by_name", ["name"])
     .index("by_username", ["username"]),
 
-  // Supports 1:1 (and future group) conversations.
+  // Supports 1:1 and group conversations.
   conversations: defineTable({
     isGroup: v.boolean(),
     name: v.optional(v.string()),         // For group chats; null for 1:1
+    groupAvatar: v.optional(v.string()),  // Icon for groups
     members: v.array(v.id("users")),      // Array of Convex user IDs
     lastMessage: v.string(),
     lastMessageAt: v.number(),            // Unix timestamp for ordering
     status: v.optional(v.union(v.literal("pending"), v.literal("accepted"))),
     initiatorId: v.optional(v.id("users")),           // User who started the conversation
+    createdBy: v.optional(v.id("users")),            // ID of group creator
+    hiddenFor: v.optional(v.array(v.id("users"))),    // Users who "deleted" the chat locally
   })
     .index("by_last_message_at", ["lastMessageAt"]),
 
@@ -43,6 +46,9 @@ export default defineSchema({
     deleted: v.boolean(),
     // readBy tracks which users have seen this message — used for unread counts
     readBy: v.array(v.id("users")),
+    type: v.optional(v.union(v.literal("text"), v.literal("image"))), // text or image
+    imageUrl: v.optional(v.string()),    // Storage ID or URL for images
+    status: v.optional(v.union(v.literal("sending"), v.literal("sent"), v.literal("error"))), // for optimistic UI
     // Optional per-message emoji reactions
     reactions: v.optional(
       v.array(

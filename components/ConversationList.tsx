@@ -53,13 +53,17 @@ export function ConversationList({
         return conv.status === "accepted" || (conv.status === "pending" && conv.initiatorId === me._id);
     });
 
-    // Client-side filter: search by other user's name or last message
+    // Client-side filter: search by name or last message
     type ConvItem = NonNullable<typeof conversations>[number];
     const filtered: ConvItem[] = search.trim()
-        ? filteredByStatus.filter((conv: ConvItem) =>
-            conv.otherUser?.name.toLowerCase().includes(search.toLowerCase().trim()) ||
-            (conv.otherUser?.username && conv.otherUser.username.toLowerCase().includes(search.toLowerCase().trim()))
-        )
+        ? filteredByStatus.filter((conv: ConvItem) => {
+            const searchLower = search.toLowerCase().trim();
+            if (conv.isGroup) {
+                return conv.name?.toLowerCase().includes(searchLower);
+            }
+            return conv.otherUser?.name.toLowerCase().includes(searchLower) ||
+                (conv.otherUser?.username && conv.otherUser.username.toLowerCase().includes(searchLower));
+        })
         : filteredByStatus;
 
     if (filtered.length === 0) {
@@ -100,13 +104,21 @@ export function ConversationList({
                         >
                             {/* Avatar with online dot */}
                             <div className="relative flex-shrink-0">
-                                <Avatar className="h-10 w-10">
-                                    <AvatarImage src={other?.imageUrl} alt={other?.name ?? ""} />
-                                    <AvatarFallback className="text-xs font-medium bg-primary/10 text-primary">
-                                        {getInitials(other?.name ?? "?")}
-                                    </AvatarFallback>
+                                <Avatar className={cn("h-10 w-10", conv.isGroup && "rounded-lg overflow-hidden")}>
+                                    {conv.isGroup ? (
+                                        <div className="h-full w-full flex items-center justify-center bg-primary/10 text-primary font-bold text-xs">
+                                            {getInitials(conv.name ?? "Group")}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <AvatarImage src={other?.imageUrl} alt={other?.name ?? ""} />
+                                            <AvatarFallback className="text-xs font-medium bg-primary/10 text-primary">
+                                                {getInitials(other?.name ?? "?")}
+                                            </AvatarFallback>
+                                        </>
+                                    )}
                                 </Avatar>
-                                {other?.isOnline && (
+                                {!conv.isGroup && other?.isOnline && (
                                     <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-card bg-green-500" />
                                 )}
                             </div>
@@ -115,7 +127,7 @@ export function ConversationList({
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between gap-1">
                                     <p className="text-sm font-medium truncate">
-                                        {other?.name ?? "Unknown"}
+                                        {conv.isGroup ? conv.name : (other?.name ?? "Unknown")}
                                     </p>
                                     {conv.lastMessageAt > 0 && (
                                         <span className="text-[11px] text-muted-foreground whitespace-nowrap flex-shrink-0">
@@ -124,16 +136,23 @@ export function ConversationList({
                                     )}
                                 </div>
                                 <div className="flex items-center justify-between mt-0.5">
-                                    <p
-                                        className={cn(
-                                            "text-xs truncate",
-                                            (conv.unreadCount > 0 && !isActive) || isPendingToMe
-                                                ? "font-medium text-foreground"
-                                                : "text-muted-foreground"
+                                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                                        {conv.isGroup && (
+                                            <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded flex-shrink-0">
+                                                {conv.members.length} members
+                                            </span>
                                         )}
-                                    >
-                                        {isPendingToMe ? "Sent you a message request" : (conv.lastMessage || "Start a conversation")}
-                                    </p>
+                                        <p
+                                            className={cn(
+                                                "text-xs truncate",
+                                                (conv.unreadCount > 0 && !isActive) || isPendingToMe
+                                                    ? "font-medium text-foreground"
+                                                    : "text-muted-foreground"
+                                            )}
+                                        >
+                                            {isPendingToMe ? "Sent you a message request" : (conv.lastMessage || "Start a conversation")}
+                                        </p>
+                                    </div>
                                     {conv.unreadCount > 0 && !isActive && !isPendingToMe && (
                                         <Badge
                                             variant="default"
@@ -142,7 +161,7 @@ export function ConversationList({
                                             {conv.unreadCount > 99 ? "99+" : conv.unreadCount}
                                         </Badge>
                                     )}
-                                    {conv.status === "pending" && conv.initiatorId === me._id && (
+                                    {conv.status === "pending" && !conv.isGroup && conv.initiatorId === me._id && (
                                         <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Pending</span>
                                     )}
                                 </div>

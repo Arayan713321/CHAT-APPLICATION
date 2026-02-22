@@ -12,6 +12,8 @@ export const send = mutation({
         conversationId: v.id("conversations"),
         senderId: v.id("users"),
         content: v.string(),
+        type: v.optional(v.union(v.literal("text"), v.literal("image"))),
+        imageUrl: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const now = Date.now();
@@ -22,14 +24,16 @@ export const send = mutation({
             content: args.content,
             createdAt: now,
             deleted: false,
-            // Sender has implicitly read their own message
             readBy: [args.senderId],
             reactions: [],
+            type: args.type ?? "text",
+            imageUrl: args.imageUrl,
+            status: "sent",
         });
 
         // Keep conversation metadata in sync for sidebar previews
         await ctx.db.patch(args.conversationId, {
-            lastMessage: args.content,
+            lastMessage: args.type === "image" ? "📷 Image" : args.content,
             lastMessageAt: now,
         });
 

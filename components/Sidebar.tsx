@@ -7,8 +7,9 @@ import { api } from "@/convex/_generated/api";
 import { ConversationList } from "@/components/ConversationList";
 import { UserList } from "@/components/UserList";
 import { Input } from "@/components/ui/input";
-import { Search, MessageSquare, Users } from "lucide-react";
+import { Search, MessageSquare, Users, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NewGroupModal } from "@/components/NewGroupModal";
 
 type Tab = "chats" | "people" | "requests";
 
@@ -19,6 +20,7 @@ interface SidebarProps {
 export function Sidebar({ activeConversationId }: SidebarProps) {
     const [activeTab, setActiveTab] = useState<Tab>("chats");
     const [search, setSearch] = useState("");
+    const [isNewGroupModalOpen, setIsNewGroupModalOpen] = useState(false);
     const { user } = useUser();
 
     // Resolve the Convex user document for the current Clerk user
@@ -63,8 +65,27 @@ export function Sidebar({ activeConversationId }: SidebarProps) {
                     </div>
                 </div>
                 {/* Clerk UserButton: shows avatar, profile, sign-out */}
-                <UserButton afterSignOutUrl="/" />
+                <div className="flex items-center gap-2">
+                    {activeTab === "chats" && (
+                        <button
+                            onClick={() => setIsNewGroupModalOpen(true)}
+                            className="p-1.5 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                            title="New Group"
+                        >
+                            <Plus className="h-4.5 w-4.5" />
+                        </button>
+                    )}
+                    <UserButton afterSignOutUrl="/" />
+                </div>
             </div>
+
+            {isNewGroupModalOpen && me && user && (
+                <NewGroupModal
+                    meId={me._id}
+                    clerkId={user.id}
+                    onClose={() => setIsNewGroupModalOpen(false)}
+                />
+            )}
 
             {/* ── Search ────────────────────────────────────────────── */}
             <div className="px-3 py-3">

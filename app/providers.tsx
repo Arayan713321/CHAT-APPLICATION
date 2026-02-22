@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ConvexReactClient } from "convex/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { PushNotificationManager } from "@/components/PushNotificationManager";
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 
@@ -40,7 +41,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
     return (
         <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
-            <TooltipProvider>{children}</TooltipProvider>
+            <TooltipProvider>
+                <PushNotificationManager />
+                {children}
+            </TooltipProvider>
         </ConvexProviderWithClerk>
     );
 }

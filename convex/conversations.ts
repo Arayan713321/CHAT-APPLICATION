@@ -105,14 +105,22 @@ export const list = query({
 
         // Filter to conversations this user belongs to, AND exclude blocked users
         const myConversations = allConversations.filter((conv) => {
+            // Must be a member
             if (!conv.members.includes(args.userId)) return false;
 
-            const otherMemberId = conv.members.find(id => id !== args.userId);
-            if (otherMemberId && blockedIds.has(otherMemberId)) return false;
+            // Respect soft delete
+            const hiddenFor = conv.hiddenFor ?? [];
+            if (hiddenFor.includes(args.userId)) return false;
 
-            // Treat missing status as accepted for backward compatibility
-            const status = conv.status ?? "accepted";
-            if (status !== 'accepted') return false;
+            // For 1:1 chats, check blocking
+            if (!conv.isGroup) {
+                const otherMemberId = conv.members.find(id => id !== args.userId);
+                if (otherMemberId && blockedIds.has(otherMemberId)) return false;
+
+                // Treat missing status as accepted for backward compatibility
+                const status = conv.status ?? "accepted";
+                if (status !== 'accepted') return false;
+            }
 
             return true;
         });
@@ -188,6 +196,91 @@ export const rejectRequest = mutation({
         for (const msg of messages) {
             await ctx.db.delete(msg._id);
         }
+    },
+});
+
+/**
+ * Create a new group conversation.
+ */
+export const createGroup = mutation({
+    args: {
+        name: v.string(),
+        memberIds: v.array(v.id("users")),
+        createdBy: v.id("users"),
+    },
+    handler: async (ctx, args) => {
+        // Ensure creator is in members
+        const members = Array.from(new Set([...args.memberIds, args.createdBy]));
+
+        return await ctx.db.insert("conversations", {
+            isGroup: true,
+            name: args.name,
+            members,
+            lastMessage: "",
+            lastMessageAt: Date.now(),
+            status: "accepted",
+            createdBy: args.createdBy,
+        });
+    },
+});
+
+/**
+ * Leave a group or delete/hide a 1:1 conversation.
+ */
+export const leaveGroup = mutation({
+    args: {
+        conversationId: v.id("conversations"),
+        userId: v.id("users"),
+    },
+    handler: async (ctx, args) => {
+        const conversation = await ctx.db.get(args.conversationId);
+        if (!conversation) return;
+
+        if (conversation.isGroup) {
+            const newMembers = conversation.members.filter(id => id !== args.userId);
+
+            if (newMembers.length === 0) {
+                // Last member left, delete group and messages
+                await ctx.db.delete(args.conversationId);
+                const messages = await ctx.db
+                    .query("messages")
+                    .withIndex("by_conversation", (q) => q.eq("conversationId", args.conversationId))
+                    .collect();
+                for (const msg of messages) {
+                    await ctx.db.delete(msg._id);
+                }
+            } else {
+                await ctx.db.patch(args.conversationId, {
+                    members: newMembers,
+                });
+            }
+        } else {
+            // Soft delete for 1:1
+            const hiddenFor = conversation.hiddenFor ?? [];
+            if (!hiddenFor.includes(args.userId)) {
+                await ctx.db.patch(args.conversationId, {
+                    hiddenFor: [...hiddenFor, args.userId],
+                });
+            }
+        }
+    },
+});
+
+/**
+ * Get shared groups between two users.
+ */
+export const getSharedGroups = query({
+    args: { user1: v.id("users"), user2: v.id("users") },
+    handler: async (ctx, args) => {
+        const conversations = await ctx.db
+            .query("conversations")
+            .collect();
+
+        return conversations.filter((conv) =>
+            conv.isGroup &&
+            conv.members.includes(args.user1) &&
+            conv.members.includes(args.user2)
+        );
     },
 });
 

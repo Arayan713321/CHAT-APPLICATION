@@ -12,6 +12,7 @@ import { MessageSquare, ShieldAlert, ArrowLeft, Loader2, Mail, User, ShieldCheck
 import { useGetOrCreateConversation } from "@/lib/getOrCreateConversation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { formatLastSeen } from "@/lib/formatTimestamp";
 
 export default function ProfilePage() {
     const { userId } = useParams();
@@ -29,6 +30,9 @@ export default function ProfilePage() {
     const unblockMutation = useMutation(api.users.unblockUser);
     const blockStatus = useQuery(api.users.isBlocked,
         me && targetUser ? { userId: me._id, targetId: targetUser._id } : "skip"
+    );
+    const sharedGroups = useQuery(api.conversations.getSharedGroups,
+        me && targetUser && me._id !== targetUser._id ? { user1: me._id, user2: targetUser._id } : "skip"
     );
 
     const openConversation = useGetOrCreateConversation();
@@ -113,7 +117,7 @@ export default function ProfilePage() {
                                 <h2 className="text-2xl font-bold">{targetUser.name}</h2>
                                 <p className="text-primary font-medium">@{targetUser.username}</p>
                                 <p className="text-sm text-muted-foreground pt-1">
-                                    {targetUser.isOnline ? "Online now" : "Offline"}
+                                    {targetUser.isOnline ? "Online now" : `Last seen ${formatLastSeen(targetUser.lastSeen)}`}
                                 </p>
                             </div>
                         </div>
@@ -171,6 +175,30 @@ export default function ProfilePage() {
                                 valueClassName="text-green-500 font-medium"
                             />
                         </div>
+
+                        {/* Shared Groups */}
+                        {sharedGroups && sharedGroups.length > 0 && (
+                            <div className="space-y-4 pt-4">
+                                <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground px-1">Shared Groups</h3>
+                                <div className="grid gap-2">
+                                    {sharedGroups.map(group => (
+                                        <Link
+                                            key={group._id}
+                                            href={`/chat/${group._id}`}
+                                            className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/50 hover:bg-muted/50 transition-colors"
+                                        >
+                                            <div className="h-10 w-10 flex items-center justify-center rounded-lg bg-primary/10 text-primary font-bold text-xs uppercase">
+                                                {getInitials(group.name ?? "Group")}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium truncate">{group.name}</p>
+                                                <p className="text-[10px] text-muted-foreground">{group.members.length} members</p>
+                                            </div>
+                                        </Link>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Presence Note */}
                         {blockStatus.theyBlockedMe && !blockStatus.meBlockedThem && (
